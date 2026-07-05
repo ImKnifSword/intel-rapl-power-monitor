@@ -45,3 +45,4 @@ Every time agy modifies the project, it MUST append an entry here before finishi
 
 ## Session Log
 - 2026-07-05: Created brand-new power monitor project from Discord request, verified RAPL domains package-0 and dram, delegated implementation to agy.
+- 2026-07-05: Completed initial implementation in `/home/veno/Projects/intel-rapl-power-monitor`: FastAPI endpoints `/`, `/healthz`, `/api/power`, `/api/summary`; background 1s RAPL sampler; responsive Chart.js dashboard; pytest suite passing; README with run/verification/chmod/systemd steps; created PR #1 against ImKnifSword/intel-rapl-power-monitor.
