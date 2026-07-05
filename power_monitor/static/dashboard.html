@@ -1,0 +1,729 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Intel RAPL Power Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0f19;
+            --card-bg: rgba(22, 31, 51, 0.7);
+            --card-border: rgba(255, 255, 255, 0.07);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            
+            --pkg-color: #10b981;
+            --pkg-glow: rgba(16, 185, 129, 0.15);
+            --dram-color: #8b5cf6;
+            --dram-glow: rgba(139, 92, 246, 0.15);
+            --accent-blue: #3b82f6;
+            
+            --font-family: 'Outfit', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(16, 185, 129, 0.05) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(139, 92, 246, 0.05) 0px, transparent 50%);
+            color: var(--text-main);
+            font-family: var(--font-family);
+            min-height: 100vh;
+            padding: 2rem;
+            line-height: 1.5;
+            overflow-x: hidden;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2.5rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            padding-bottom: 1.5rem;
+        }
+
+        .header-title h1 {
+            font-size: 2.2rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, #fff 30%, var(--text-muted) 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -0.5px;
+        }
+
+        .header-title p {
+            color: var(--text-muted);
+            font-size: 0.95rem;
+            margin-top: 0.25rem;
+        }
+
+        .system-status {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .badge {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            padding: 0.5rem 1rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            backdrop-filter: blur(10px);
+        }
+
+        .pulse-dot {
+            width: 8px;
+            height: 8px;
+            background-color: var(--pkg-color);
+            border-radius: 50%;
+            display: inline-block;
+            box-shadow: 0 0 8px var(--pkg-color);
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+            70% { transform: scale(1); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+            100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+        }
+
+        /* Metric Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 1.75rem;
+            backdrop-filter: blur(15px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 4px;
+            background: transparent;
+        }
+
+        .card.package::before { background: var(--pkg-color); }
+        .card.dram::before { background: var(--dram-color); }
+        .card.uptime::before { background: var(--accent-blue); }
+
+        .card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.15);
+            box-shadow: 0 12px 24px -10px rgba(0, 0, 0, 0.5);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 1rem;
+        }
+
+        .mode-tag {
+            font-size: 0.75rem;
+            padding: 0.2rem 0.5rem;
+            border-radius: 6px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .mode-tag.sysfs {
+            background: rgba(16, 185, 129, 0.1);
+            color: var(--pkg-color);
+            border: 1px solid rgba(16, 185, 129, 0.2);
+        }
+
+        .mode-tag.mock {
+            background: rgba(245, 158, 11, 0.1);
+            color: #f59e0b;
+            border: 1px solid rgba(245, 158, 11, 0.2);
+        }
+
+        .card-value {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 0.5rem;
+            letter-spacing: -1px;
+            display: flex;
+            align-items: baseline;
+        }
+
+        .card-value span {
+            font-size: 1.25rem;
+            font-weight: 500;
+            color: var(--text-muted);
+            margin-left: 0.25rem;
+        }
+
+        .card-footer {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.85rem;
+            color: var(--text-muted);
+            border-top: 1px solid rgba(255, 255, 255, 0.04);
+            padding-top: 0.75rem;
+            margin-top: 0.75rem;
+        }
+
+        .footer-metric strong {
+            color: var(--text-main);
+        }
+
+        /* Chart Area */
+        .chart-container {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 24px;
+            padding: 2rem;
+            backdrop-filter: blur(15px);
+            margin-bottom: 2.5rem;
+            position: relative;
+        }
+
+        .chart-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .chart-header h2 {
+            font-size: 1.3rem;
+            font-weight: 600;
+        }
+
+        .chart-controls {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            color: var(--text-muted);
+            padding: 0.4rem 0.8rem;
+            border-radius: 8px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-family: var(--font-family);
+            font-weight: 500;
+        }
+
+        .btn:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: var(--text-main);
+        }
+
+        .btn.active {
+            background: var(--accent-blue);
+            border-color: var(--accent-blue);
+            color: #fff;
+        }
+
+        /* Detail Section */
+        .detail-section {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 1.5rem;
+        }
+
+        .stats-table-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 1.75rem;
+            backdrop-filter: blur(15px);
+        }
+
+        .stats-table-card h2 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 1.25rem;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            text-align: left;
+        }
+
+        th {
+            color: var(--text-muted);
+            font-size: 0.8rem;
+            text-transform: uppercase;
+            font-weight: 600;
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        td {
+            padding: 1rem;
+            font-size: 0.95rem;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .component-cell {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-weight: 500;
+        }
+
+        .color-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+
+        .color-indicator.pkg { background-color: var(--pkg-color); }
+        .color-indicator.dram { background-color: var(--dram-color); }
+
+        .about-card {
+            background: var(--card-bg);
+            border: 1px solid var(--card-border);
+            border-radius: 20px;
+            padding: 1.75rem;
+            backdrop-filter: blur(15px);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .about-card h3 {
+            font-size: 1.2rem;
+            font-weight: 600;
+            margin-bottom: 0.75rem;
+        }
+
+        .about-card p {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            margin-bottom: 1rem;
+            line-height: 1.6;
+        }
+
+        .rapl-paths {
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 10px;
+            padding: 0.75rem;
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            border: 1px solid rgba(255, 255, 255, 0.03);
+        }
+
+        .rapl-paths div {
+            margin-bottom: 0.25rem;
+        }
+        .rapl-paths div:last-child {
+            margin-bottom: 0;
+        }
+
+        .path-label {
+            color: #3b82f6;
+        }
+
+        /* Responsive Layout */
+        @media (max-width: 960px) {
+            .detail-section {
+                grid-template-columns: 1fr;
+            }
+            body {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="header-title">
+                <h1>Intel RAPL Power Monitor</h1>
+                <p>Real-time telemetry for CPU Package & DRAM energy domains</p>
+            </div>
+            <div class="system-status">
+                <div class="badge">
+                    <span class="pulse-dot"></span>
+                    Live Telemetry
+                </div>
+                <div class="badge">
+                    Interval: 1.0s
+                </div>
+            </div>
+        </header>
+
+        <!-- Metrics Row -->
+        <div class="metrics-grid">
+            <!-- CPU Package Card -->
+            <div class="card package">
+                <div class="card-header">
+                    <span>CPU Package (Package-0)</span>
+                    <span id="pkg-mode" class="mode-tag sysfs">sysfs</span>
+                </div>
+                <div>
+                    <div class="card-value" id="pkg-power">0.00<span>W</span></div>
+                </div>
+                <div class="card-footer">
+                    <div class="footer-metric">Total: <strong id="pkg-energy">0.00 Wh</strong></div>
+                    <div class="footer-metric">Peak: <strong id="pkg-peak">0.0 W</strong></div>
+                </div>
+            </div>
+
+            <!-- DRAM Card -->
+            <div class="card dram">
+                <div class="card-header">
+                    <span>System memory (DRAM)</span>
+                    <span id="dram-mode" class="mode-tag sysfs">sysfs</span>
+                </div>
+                <div>
+                    <div class="card-value" id="dram-power">0.00<span>W</span></div>
+                </div>
+                <div class="card-footer">
+                    <div class="footer-metric">Total: <strong id="dram-energy">0.00 Wh</strong></div>
+                    <div class="footer-metric">Peak: <strong id="dram-peak">0.0 W</strong></div>
+                </div>
+            </div>
+
+            <!-- Total System Card (Sum) -->
+            <div class="card uptime">
+                <div class="card-header">
+                    <span>Aggregated Power</span>
+                    <span class="mode-tag sysfs" style="background: rgba(59, 130, 246, 0.1); color: var(--accent-blue); border: 1px solid rgba(59, 130, 246, 0.2);">Active</span>
+                </div>
+                <div>
+                    <div class="card-value" id="total-power">0.00<span>W</span></div>
+                </div>
+                <div class="card-footer">
+                    <div class="footer-metric">Combined: <strong id="total-energy-wh">0.00 Wh</strong></div>
+                    <div class="footer-metric">Uptime: <strong id="uptime">0s</strong></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Real-Time Chart -->
+        <div class="chart-container">
+            <div class="chart-header">
+                <h2>Power Consumption History</h2>
+                <div class="chart-controls">
+                    <button class="btn active" onclick="setChartWindow(60)">1m</button>
+                    <button class="btn" onclick="setChartWindow(120)">2m</button>
+                    <button class="btn" onclick="setChartWindow(300)">5m</button>
+                </div>
+            </div>
+            <div style="height: 350px; position: relative; width: 100%;">
+                <canvas id="powerChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Details Section -->
+        <div class="detail-section">
+            <!-- Statistical Summary Table -->
+            <div class="stats-table-card">
+                <h2>Detailed Metrics Summary</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Domain Component</th>
+                            <th>Current (W)</th>
+                            <th>Min (W)</th>
+                            <th>Max (W)</th>
+                            <th>Avg (W)</th>
+                            <th>Energy Consumed</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>
+                                <div class="component-cell">
+                                    <span class="color-indicator pkg"></span>
+                                    CPU Package-0
+                                </div>
+                            </td>
+                            <td id="table-pkg-cur">0.00 W</td>
+                            <td id="table-pkg-min">0.00 W</td>
+                            <td id="table-pkg-max">0.00 W</td>
+                            <td id="table-pkg-avg">0.00 W</td>
+                            <td id="table-pkg-energy">0.000 Wh (0 J)</td>
+                        </tr>
+                        <tr>
+                            <td>
+                                <div class="component-cell">
+                                    <span class="color-indicator dram"></span>
+                                    DRAM (Memory)
+                                </div>
+                            </td>
+                            <td id="table-dram-cur">0.00 W</td>
+                            <td id="table-dram-min">0.00 W</td>
+                            <td id="table-dram-max">0.00 W</td>
+                            <td id="table-dram-avg">0.00 W</td>
+                            <td id="table-dram-energy">0.000 Wh (0 J)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- About / Paths Information -->
+            <div class="about-card">
+                <div>
+                    <h3>Intel RAPL Interfaces</h3>
+                    <p>
+                        Intel Running Average Power Limit (RAPL) exports microjoule energy counters via sysfs. This daemon computes instantaneous power by calculating the delta between readings.
+                    </p>
+                </div>
+                <div class="rapl-paths">
+                    <div><span class="path-label">Package-0:</span> /sys/class/powercap/intel-rapl:0</div>
+                    <div><span class="path-label">DRAM:</span> /sys/class/powercap/intel-rapl:0:2</div>
+                    <div style="margin-top: 0.5rem; color: #f59e0b;">* Auto-simulates if sysfs files are locked / require root.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let chartWindowSize = 60; // default 1 minute (60 seconds)
+        let powerChart;
+        
+        // Initialize Chart
+        function initChart() {
+            const ctx = document.getElementById('powerChart').getContext('2d');
+            
+            // Create nice background gradients
+            const pkgGradient = ctx.createLinearGradient(0, 0, 0, 300);
+            pkgGradient.addColorStop(0, 'rgba(16, 185, 129, 0.25)');
+            pkgGradient.addColorStop(1, 'rgba(16, 185, 129, 0.00)');
+            
+            const dramGradient = ctx.createLinearGradient(0, 0, 0, 300);
+            dramGradient.addColorStop(0, 'rgba(139, 92, 246, 0.25)');
+            dramGradient.addColorStop(1, 'rgba(139, 92, 246, 0.00)');
+
+            powerChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'CPU Package (W)',
+                            borderColor: '#10b981',
+                            borderWidth: 2,
+                            backgroundColor: pkgGradient,
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 0,
+                            pointHoverRadius: 4,
+                            data: []
+                        },
+                        {
+                            label: 'DRAM (W)',
+                            borderColor: '#8b5cf6',
+                            borderWidth: 2,
+                            backgroundColor: dramGradient,
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 0,
+                            pointHoverRadius: 4,
+                            data: []
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: '#f3f4f6',
+                                font: { family: 'Outfit', size: 12 }
+                            }
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(11, 15, 25, 0.9)',
+                            titleFont: { family: 'Outfit', size: 13, weight: 'bold' },
+                            bodyFont: { family: 'Outfit', size: 12 },
+                            borderColor: 'rgba(255, 255, 255, 0.1)',
+                            borderWidth: 1
+                        }
+                    },
+                    scales: {
+                        x: {
+                            grid: { color: 'rgba(255, 255, 255, 0.03)' },
+                            ticks: {
+                                color: '#9ca3af',
+                                maxRotation: 0,
+                                autoSkip: true,
+                                maxTicksLimit: 10,
+                                font: { family: 'Outfit' }
+                            }
+                        },
+                        y: {
+                            grid: { color: 'rgba(255, 255, 255, 0.03)' },
+                            ticks: {
+                                color: '#9ca3af',
+                                font: { family: 'Outfit' }
+                            },
+                            title: {
+                                display: true,
+                                text: 'Power (Watts)',
+                                color: '#9ca3af',
+                                font: { family: 'Outfit', weight: 'bold' }
+                            },
+                            suggestedMin: 0
+                        }
+                    }
+                }
+            });
+        }
+
+        // Change chart window
+        function setChartWindow(seconds) {
+            chartWindowSize = seconds;
+            
+            // Update button active states
+            const buttons = document.querySelectorAll('.chart-controls .btn');
+            buttons.forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Re-render immediately
+            updateUI();
+        }
+
+        // Fetch data and update dashboard
+        async function updateDashboard() {
+            try {
+                const response = await fetch('/api/summary');
+                const data = await response.json();
+                
+                // Keep local reference to data to reuse
+                window.lastSummaryData = data;
+                updateUI();
+            } catch (err) {
+                console.error("Error fetching power summary telemetry:", err);
+            }
+        }
+
+        function updateUI() {
+            const data = window.lastSummaryData;
+            if (!data) return;
+
+            // Uptime
+            const uptime = data.uptime_seconds;
+            const hrs = Math.floor(uptime / 3600);
+            const mins = Math.floor((uptime % 3600) / 60);
+            const secs = uptime % 60;
+            document.getElementById('uptime').textContent = 
+                `${hrs > 0 ? hrs + 'h ' : ''}${mins > 0 || hrs > 0 ? mins + 'm ' : ''}${secs}s`;
+
+            // Active Modes
+            const pkgMode = document.getElementById('pkg-mode');
+            pkgMode.textContent = data.package.is_mock ? "simulated" : "sysfs";
+            pkgMode.className = `mode-tag ${data.package.is_mock ? 'mock' : 'sysfs'}`;
+
+            const dramMode = document.getElementById('dram-mode');
+            dramMode.textContent = data.dram.is_mock ? "simulated" : "sysfs";
+            dramMode.className = `mode-tag ${data.dram.is_mock ? 'mock' : 'sysfs'}`;
+
+            // Current Power Values
+            const history = data.history || [];
+            const latest = history.length > 0 ? history[history.length - 1] : { package_w: 0, dram_w: 0 };
+            
+            document.getElementById('pkg-power').innerHTML = `${latest.package_w.toFixed(2)}<span>W</span>`;
+            document.getElementById('dram-power').innerHTML = `${latest.dram_w.toFixed(2)}<span>W</span>`;
+            document.getElementById('total-power').innerHTML = `${(latest.package_w + latest.dram_w).toFixed(2)}<span>W</span>`;
+
+            // Energy Values
+            document.getElementById('pkg-energy').textContent = `${data.package.total_energy_wh.toFixed(4)} Wh`;
+            document.getElementById('dram-energy').textContent = `${data.dram.total_energy_wh.toFixed(4)} Wh`;
+            document.getElementById('total-energy-wh').textContent = `${(data.package.total_energy_wh + data.dram.total_energy_wh).toFixed(4)} Wh`;
+
+            // Peak Values
+            document.getElementById('pkg-peak').textContent = `${data.package.max_power_w.toFixed(1)} W`;
+            document.getElementById('dram-peak').textContent = `${data.dram.max_power_w.toFixed(1)} W`;
+
+            // Table updates
+            document.getElementById('table-pkg-cur').textContent = `${latest.package_w.toFixed(2)} W`;
+            document.getElementById('table-pkg-min').textContent = `${data.package.min_power_w.toFixed(2)} W`;
+            document.getElementById('table-pkg-max').textContent = `${data.package.max_power_w.toFixed(2)} W`;
+            document.getElementById('table-pkg-avg').textContent = `${data.package.average_power_w.toFixed(2)} W`;
+            document.getElementById('table-pkg-energy').innerHTML = `<strong>${data.package.total_energy_wh.toFixed(4)} Wh</strong> <span style="color: var(--text-muted); font-size: 0.8rem;">(${Math.round(data.package.total_energy_joules)} J)</span>`;
+
+            document.getElementById('table-dram-cur').textContent = `${latest.dram_w.toFixed(2)} W`;
+            document.getElementById('table-dram-min').textContent = `${data.dram.min_power_w.toFixed(2)} W`;
+            document.getElementById('table-dram-max').textContent = `${data.dram.max_power_w.toFixed(2)} W`;
+            document.getElementById('table-dram-avg').textContent = `${data.dram.average_power_w.toFixed(2)} W`;
+            document.getElementById('table-dram-energy').innerHTML = `<strong>${data.dram.total_energy_wh.toFixed(4)} Wh</strong> <span style="color: var(--text-muted); font-size: 0.8rem;">(${Math.round(data.dram.total_energy_joules)} J)</span>`;
+
+            // Chart Update
+            const windowHistory = history.slice(-chartWindowSize);
+            const labels = windowHistory.map(h => {
+                const parts = h.timestamp.split('T')[1].replace('Z', '').split(':');
+                return `${parts[1]}:${parts[2]}`; // MM:SS format
+            });
+            const pkgData = windowHistory.map(h => h.package_w);
+            const dramData = windowHistory.map(h => h.dram_w);
+
+            powerChart.data.labels = labels;
+            powerChart.data.datasets[0].data = pkgData;
+            powerChart.data.datasets[1].data = dramData;
+            powerChart.update('none'); // Update without animation for raw performance
+        }
+
+        // Setup onload
+        window.addEventListener('load', () => {
+            initChart();
+            updateDashboard();
+            // Poll every 1 second
+            setInterval(updateDashboard, 1000);
+        });
+    </script>
+</body>
+</html>
